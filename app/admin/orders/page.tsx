@@ -1,6 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import {
+    Suspense,
+    useEffect,
+    useState,
+} from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
@@ -116,7 +120,7 @@ const statuses = [
 // PAGE
 // ==========================================
 
-export default function AdminOrdersPage() {
+function AdminOrdersContent() {
 
     const { user, loading: authLoading } =
         useAuth();
@@ -1281,8 +1285,8 @@ export default function AdminOrdersPage() {
                             </div>
 
                             {/* ==================================
-    REFUND
-================================== */}
+                                    REFUND
+                            ================================== */}
 
                             {selectedOrder.status === 'Cancelled' &&
                                 selectedOrder.paymentMethod === 'Razorpay' && (
@@ -1387,4 +1391,19 @@ export default function AdminOrdersPage() {
 
     );
 
+}
+
+
+export default function AdminOrdersPage() {
+    return (
+        <Suspense
+            fallback={
+                <div className="min-h-screen bg-[#FAF8F5] flex items-center justify-center text-stone-500">
+                    Loading orders...
+                </div>
+            }
+        >
+            <AdminOrdersContent />
+        </Suspense>
+    );
 }
