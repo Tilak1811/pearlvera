@@ -7,6 +7,12 @@ const nextConfig: NextConfig = {
     "localhost",
     "127.0.0.1",
   ],
+
+  serverExternalPackages: [
+    "firebase-admin",
+    "jwks-rsa",
+    "jose",
+  ],
 };
 
 export default nextConfig;
