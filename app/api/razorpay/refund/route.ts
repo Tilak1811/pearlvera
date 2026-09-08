@@ -164,6 +164,21 @@ export async function POST(
         }
 
         if (
+            typeof order?.paymentId !== 'string' ||
+            order.paymentId !== paymentId
+        ) {
+            return NextResponse.json(
+                {
+                    error:
+                        'Payment does not belong to this order.',
+                },
+                {
+                    status: 400,
+                }
+            );
+        }
+
+        if (
             order?.status !==
             'Cancelled'
         ) {
@@ -179,13 +194,94 @@ export async function POST(
         }
 
         if (
-            order?.refundStatus ===
-            'Refunded'
+            order?.refundStatus === 'Refunded' ||
+            order?.refundStatus === 'Refund Pending'
         ) {
             return NextResponse.json(
                 {
                     error:
-                        'This order has already been refunded.',
+                        'A refund has already been processed or is currently pending for this order.',
+                },
+                {
+                    status: 400,
+                }
+            );
+        }
+
+        // ==========================================
+        // VALIDATE REFUND AMOUNT
+        // ==========================================
+
+        const orderTotal =
+            Number(order.total);
+
+        if (
+            !Number.isFinite(orderTotal) ||
+            orderTotal <= 0
+        ) {
+            return NextResponse.json(
+                {
+                    error:
+                        'Order has an invalid refund amount.',
+                },
+                {
+                    status: 400,
+                }
+            );
+        }
+
+        // ==========================================
+        // VERIFY PAYMENT WITH RAZORPAY
+        // ==========================================
+
+        const payment =
+            await razorpay.payments.fetch(
+                paymentId
+            );
+
+        if (
+            payment.order_id !==
+            order.razorpayOrderId
+        ) {
+            return NextResponse.json(
+                {
+                    error:
+                        'Razorpay payment does not belong to this order.',
+                },
+                {
+                    status: 400,
+                }
+            );
+        }
+
+        if (
+            payment.status !==
+            'captured'
+        ) {
+            return NextResponse.json(
+                {
+                    error:
+                        'Payment is not captured and cannot be refunded.',
+                },
+                {
+                    status: 400,
+                }
+            );
+        }
+
+        const refundAmount =
+            Math.round(
+                orderTotal * 100
+            );
+
+        if (
+            payment.amount !==
+            refundAmount
+        ) {
+            return NextResponse.json(
+                {
+                    error:
+                        'Payment amount does not match the order total.',
                 },
                 {
                     status: 400,
@@ -202,10 +298,7 @@ export async function POST(
                 paymentId,
                 {
                     amount:
-                        Math.round(
-                            Number(order.total) *
-                            100
-                        ),
+                        refundAmount,
                     speed: 'normal',
                 }
             );

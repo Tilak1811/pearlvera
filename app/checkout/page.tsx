@@ -5,10 +5,6 @@ import { useRouter } from 'next/navigation';
 
 import {
     addDoc,
-    collection,
-    serverTimestamp,
-    runTransaction,
-    doc,
 } from 'firebase/firestore';
 
 import { onAuthStateChanged } from 'firebase/auth';
@@ -257,6 +253,8 @@ export default function CheckoutPage() {
 
     async function placeOrder() {
 
+        let paymentCompleted = false;
+
         // --------------------------------------
         // LOGIN CHECK
         // --------------------------------------
@@ -320,9 +318,22 @@ export default function CheckoutPage() {
                 subtotal + shipping;
 
 
+
             // ==================================
             // CREATE RAZORPAY ORDER
             // ==================================
+
+            const currentUser =
+                auth.currentUser;
+
+            if (!currentUser) {
+                throw new Error(
+                    'Your session has expired. Please login again.'
+                );
+            }
+
+            const idToken =
+                await currentUser.getIdToken();
 
             const response =
                 await fetch(
@@ -333,10 +344,25 @@ export default function CheckoutPage() {
                         headers: {
                             'Content-Type':
                                 'application/json',
+
+                            Authorization:
+                                `Bearer ${idToken}`,
                         },
 
                         body: JSON.stringify({
-                            amount: total,
+                            items:
+                                cart.map(
+                                    (item) => ({
+                                        productId:
+                                            typeof item.id ===
+                                                'string'
+                                                ? item.id
+                                                : item.slug,
+
+                                        quantity:
+                                            item.quantity,
+                                    })
+                                ),
                         }),
                     }
                 );
@@ -501,301 +527,142 @@ export default function CheckoutPage() {
                                             );
                                         }
 
+                                        paymentCompleted = true;
+
 
                                         // ==================================
-                                        // CREATE FIRESTORE ORDER
+                                        // CREATE ORDER SECURELY ON SERVER
                                         // ==================================
 
-                                        const orderRef =
-                                            doc(
-                                                collection(
-                                                    db,
-                                                    'orders'
-                                                )
+                                        const currentUser = auth.currentUser;
+
+                                        if (!currentUser) {
+                                            throw new Error(
+                                                'Your session has expired. Please login again.'
+                                            );
+                                        }
+
+                                        const idToken =
+                                            await currentUser.getIdToken();
+
+                                        const orderResponse =
+                                            await fetch(
+                                                '/api/orders/create',
+                                                {
+                                                    method: 'POST',
+
+                                                    headers: {
+                                                        'Content-Type':
+                                                            'application/json',
+
+                                                        Authorization:
+                                                            `Bearer ${idToken}`,
+                                                    },
+
+                                                    body:
+                                                        JSON.stringify({
+                                                            razorpayPaymentId:
+                                                                paymentResponse.razorpay_payment_id,
+
+                                                            razorpayOrderId:
+                                                                paymentResponse.razorpay_order_id,
+
+                                                            razorpaySignature:
+                                                                paymentResponse.razorpay_signature,
+
+                                                            items:
+                                                                cart.map(
+                                                                    (item) => ({
+                                                                        productId:
+                                                                            typeof item.id ===
+                                                                                'string'
+                                                                                ? item.id
+                                                                                : item.slug,
+
+                                                                        name:
+                                                                            item.name,
+
+                                                                        image:
+                                                                            item.image,
+
+                                                                        price:
+                                                                            item.price,
+
+                                                                        quantity:
+                                                                            item.quantity,
+                                                                    })
+                                                                ),
+
+                                                            customer: {
+                                                                name:
+                                                                    checkoutData.fullName,
+
+                                                                email:
+                                                                    checkoutData.email,
+
+                                                                phone:
+                                                                    checkoutData.phone,
+                                                            },
+
+                                                            shippingAddress: {
+                                                                addressId:
+                                                                    selectedAddressId,
+
+                                                                label:
+                                                                    selectedAddressId
+                                                                        ? addresses.find(
+                                                                            address =>
+                                                                                address.id ===
+                                                                                selectedAddressId
+                                                                        )?.label ||
+                                                                        null
+                                                                        : null,
+
+                                                                fullName:
+                                                                    checkoutData.fullName,
+
+                                                                phone:
+                                                                    checkoutData.phone,
+
+                                                                street:
+                                                                    checkoutData.street,
+
+                                                                city:
+                                                                    checkoutData.city,
+
+                                                                state:
+                                                                    checkoutData.state,
+
+                                                                pinCode:
+                                                                    checkoutData.pinCode,
+                                                            },
+
+                                                            subtotal,
+
+                                                            shipping,
+
+                                                            total,
+                                                        }),
+                                                }
                                             );
 
+                                        const orderResult =
+                                            await orderResponse.json();
+
+                                        if (
+                                            !orderResponse.ok ||
+                                            !orderResult.success ||
+                                            !orderResult.orderId
+                                        ) {
+                                            throw new Error(
+                                                orderResult.error ||
+                                                'Payment succeeded, but we could not create your order.'
+                                            );
+                                        }
+
+                                        const orderId =
+                                            orderResult.orderId;
 
-                                        await runTransaction(
-                                            db,
-                                            async (
-                                                transaction
-                                            ) => {
-
-                                                // ----------------------------------
-                                                // READ PRODUCTS
-                                                // ----------------------------------
-
-                                                const productSnapshots:
-                                                    {
-                                                        item:
-                                                        typeof cart[number];
-
-                                                        productId:
-                                                        string;
-
-                                                        ref:
-                                                        ReturnType<
-                                                            typeof doc
-                                                        >;
-
-                                                        snapshot:
-                                                        Awaited<
-                                                            ReturnType<
-                                                                typeof transaction.get
-                                                            >
-                                                        >;
-                                                    }[] = [];
-
-
-                                                for (
-                                                    const item
-                                                    of cart
-                                                ) {
-
-                                                    const productId =
-                                                        typeof item.id ===
-                                                            'string'
-                                                            ? item.id
-                                                            : item.slug;
-
-
-                                                    if (
-                                                        !productId
-                                                    ) {
-                                                        throw new Error(
-                                                            `Invalid product ID for "${item.name}".`
-                                                        );
-                                                    }
-
-
-                                                    const productRef =
-                                                        doc(
-                                                            db,
-                                                            'products',
-                                                            productId
-                                                        );
-
-
-                                                    const productSnapshot =
-                                                        await transaction.get(
-                                                            productRef
-                                                        );
-
-
-                                                    if (
-                                                        !productSnapshot.exists()
-                                                    ) {
-                                                        throw new Error(
-                                                            `Product "${item.name}" was not found in Firestore.`
-                                                        );
-                                                    }
-
-
-                                                    productSnapshots.push({
-                                                        item,
-                                                        productId,
-                                                        ref:
-                                                            productRef,
-                                                        snapshot:
-                                                            productSnapshot,
-                                                    });
-
-                                                }
-
-
-                                                // ----------------------------------
-                                                // CHECK STOCK
-                                                // ----------------------------------
-
-                                                for (
-                                                    const {
-                                                        item,
-                                                        snapshot,
-                                                    }
-                                                    of productSnapshots
-                                                ) {
-
-                                                    const data = snapshot.data() as {
-                                                        stock?: unknown;
-                                                    };
-
-                                                    const currentStock =
-                                                        Number(
-                                                            data.stock ?? 0
-                                                        );
-
-
-                                                    if (
-                                                        currentStock <
-                                                        item.quantity
-                                                    ) {
-                                                        throw new Error(
-                                                            `Not enough stock for "${item.name}". Only ${currentStock} available.`
-                                                        );
-                                                    }
-
-                                                }
-
-
-                                                // ----------------------------------
-                                                // REDUCE STOCK
-                                                // ----------------------------------
-
-                                                for (
-                                                    const {
-                                                        item,
-                                                        ref,
-                                                        snapshot,
-                                                    }
-                                                    of productSnapshots
-                                                ) {
-
-                                                    const data = snapshot.data() as {
-                                                        stock?: unknown;
-                                                    };
-
-                                                    const currentStock =
-                                                        Number(
-                                                            data.stock ?? 0
-                                                        );
-
-
-                                                    const newStock =
-                                                        currentStock -
-                                                        item.quantity;
-
-
-                                                    transaction.update(
-                                                        ref,
-                                                        {
-                                                            stock:
-                                                                newStock,
-                                                        }
-                                                    );
-
-                                                }
-
-
-                                                // ----------------------------------
-                                                // CREATE ORDER
-                                                // ----------------------------------
-
-                                                const order = {
-
-                                                    userId,
-
-                                                    customer: {
-
-                                                        name:
-                                                            checkoutData.fullName,
-
-                                                        email:
-                                                            checkoutData.email,
-
-                                                        phone:
-                                                            checkoutData.phone,
-
-                                                    },
-
-
-                                                    shippingAddress: {
-
-                                                        addressId:
-                                                            selectedAddressId,
-
-                                                        label:
-                                                            selectedAddressId
-                                                                ? addresses.find(
-                                                                    address =>
-                                                                        address.id ===
-                                                                        selectedAddressId
-                                                                )?.label ||
-                                                                null
-                                                                : null,
-
-                                                        fullName:
-                                                            checkoutData.fullName,
-
-                                                        phone:
-                                                            checkoutData.phone,
-
-                                                        street:
-                                                            checkoutData.street,
-
-                                                        city:
-                                                            checkoutData.city,
-
-                                                        state:
-                                                            checkoutData.state,
-
-                                                        pinCode:
-                                                            checkoutData.pinCode,
-
-                                                    },
-
-
-                                                    items:
-                                                        cart.map(
-                                                            (item) => ({
-
-                                                                productId:
-                                                                    typeof item.id ===
-                                                                        'string'
-                                                                        ? item.id
-                                                                        : item.slug,
-
-                                                                name:
-                                                                    item.name,
-
-                                                                image:
-                                                                    item.image,
-
-                                                                price:
-                                                                    item.price,
-
-                                                                quantity:
-                                                                    item.quantity,
-
-                                                            })
-                                                        ),
-
-
-                                                    subtotal,
-
-                                                    shipping,
-
-                                                    total,
-
-
-                                                    paymentMethod:
-                                                        'Razorpay',
-
-
-                                                    paymentId:
-                                                        paymentResponse.razorpay_payment_id,
-
-
-                                                    razorpayOrderId:
-                                                        paymentResponse.razorpay_order_id,
-
-
-                                                    status:
-                                                        'Processing',
-
-
-                                                    createdAt:
-                                                        serverTimestamp(),
-
-                                                };
-
-
-                                                transaction.set(
-                                                    orderRef,
-                                                    order
-                                                );
-
-                                            }
-                                        );
 
 
                                         // ==================================
@@ -804,9 +671,8 @@ export default function CheckoutPage() {
 
                                         clearCart();
 
-
                                         router.push(
-                                            `/order-success?orderId=${orderRef.id}`
+                                            `/order-success?orderId=${orderId}`
                                         );
 
 
@@ -867,15 +733,22 @@ export default function CheckoutPage() {
                 error
             );
 
+            if (paymentCompleted) {
 
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : 'Something went wrong while placing your order.';
+                alert(
+                    'Payment was received, but your order could not be completed. Please do not make another payment. Contact Pearlvera support.'
+                );
 
+            } else {
 
-            alert(message);
+                const message =
+                    error instanceof Error
+                        ? error.message
+                        : 'Something went wrong while placing your order.';
 
+                alert(message);
+
+            }
 
         } finally {
 
@@ -1291,7 +1164,7 @@ export default function CheckoutPage() {
 
                         </div>
 
-                    </div> 
+                    </div>
 
                 </section>
 

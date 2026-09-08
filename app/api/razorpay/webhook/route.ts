@@ -33,6 +33,23 @@ export async function POST(
                 'x-razorpay-signature'
             );
 
+        const eventId =
+            request.headers.get(
+                'x-razorpay-event-id'
+            );
+
+        if (!eventId) {
+            return NextResponse.json(
+                {
+                    error:
+                        'Missing webhook event ID.',
+                },
+                {
+                    status: 400,
+                }
+            );
+        }
+
         if (!signature) {
             return NextResponse.json(
                 {
@@ -79,10 +96,36 @@ export async function POST(
         const event =
             JSON.parse(rawBody);
 
+        const webhookEventRef =
+            adminDb
+                .collection('webhookEvents')
+                .doc(eventId);
+
+        const existingWebhookEvent =
+            await webhookEventRef.get();
+
+        if (existingWebhookEvent.exists) {
+            console.log(
+                'Duplicate Razorpay webhook ignored:',
+                eventId
+            );
+
+            return NextResponse.json({
+                received: true,
+                duplicate: true,
+            });
+        }
+
         console.log(
             'Razorpay webhook received:',
             event.event
         );
+
+        await webhookEventRef.create({
+            eventId,
+            event: event.event || 'unknown',
+            receivedAt: new Date(),
+        });
 
         if (
             event.event ===
