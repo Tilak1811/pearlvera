@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import Razorpay from 'razorpay';
 import { adminAuth, adminDb } from '@/lib/firebaseAdmin';
 
-console.log("PEARLVERA NODE VERSION:", process.version);
+
 
 type OrderItemInput = {
     productId: string;
