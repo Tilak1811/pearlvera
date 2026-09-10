@@ -450,6 +450,108 @@ function AdminOrdersContent() {
         }
     }
 
+    async function syncRefundStatus(
+        orderId: string,
+        paymentId: string,
+        refundId: string
+    ) {
+        if (!user) {
+            alert('You must be logged in.');
+            return;
+        }
+
+        try {
+            setUpdating(true);
+
+            const idToken =
+                await user.getIdToken();
+
+            const response =
+                await fetch(
+                    '/api/razorpay/refund/status',
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type':
+                                'application/json',
+                            Authorization:
+                                `Bearer ${idToken}`,
+                        },
+                        body: JSON.stringify({
+                            orderId,
+                            paymentId,
+                            refundId,
+                        }),
+                    }
+                );
+
+            const data =
+                await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error ||
+                    'Unable to sync refund status.'
+                );
+            }
+
+            const refundStatus =
+                data.status === 'processed'
+                    ? 'Refunded'
+                    : data.status === 'failed'
+                        ? 'Refund Failed'
+                        : 'Refund Pending';
+
+            setOrders((current) =>
+                current.map((order) =>
+                    order.id === orderId
+                        ? {
+                            ...order,
+                            refundStatus,
+                            refundId:
+                                data.refundId,
+                        }
+                        : order
+                )
+            );
+
+            setSelectedOrder((current) =>
+                current &&
+                    current.id === orderId
+                    ? {
+                        ...current,
+                        refundStatus,
+                        refundId:
+                            data.refundId,
+                    }
+                    : current
+            );
+
+            if (data.status === 'processed') {
+                alert('Refund is now marked as completed.');
+            } else if (data.status === 'failed') {
+                alert('Razorpay reports that the refund failed.');
+            } else {
+                alert('Refund is still pending.');
+            }
+
+        } catch (error) {
+            console.error(
+                'Refund status sync failed:',
+                error
+            );
+
+            alert(
+                error instanceof Error
+                    ? error.message
+                    : 'Unable to sync refund status.'
+            );
+
+        } finally {
+            setUpdating(false);
+        }
+    }
+
 
     // ==========================================
     // FORMAT DATE
@@ -1336,6 +1438,26 @@ function AdminOrdersContent() {
                                                             Refund ID: {selectedOrder.refundId}
                                                         </p>
                                                     )}
+
+                                                    {selectedOrder.paymentId &&
+                                                        selectedOrder.refundId && (
+                                                            <button
+                                                                type="button"
+                                                                disabled={updating}
+                                                                onClick={() =>
+                                                                    syncRefundStatus(
+                                                                        selectedOrder.id,
+                                                                        selectedOrder.paymentId!,
+                                                                        selectedOrder.refundId!
+                                                                    )
+                                                                }
+                                                                className="mt-4 rounded-full border border-stone-300 px-5 py-2 text-sm font-medium text-stone-800 transition hover:bg-stone-50 disabled:opacity-50"
+                                                            >
+                                                                {updating
+                                                                    ? 'Checking...'
+                                                                    : 'Sync Refund Status'}
+                                                            </button>
+                                                        )}
                                                 </div>
 
                                             ) : (
