@@ -71,13 +71,26 @@ export async function POST(
                 .update(rawBody)
                 .digest('hex');
 
-        const signaturesMatch =
-            crypto.timingSafeEqual(
-                Buffer.from(signature),
-                Buffer.from(expectedSignature)
+        const receivedSignatureBuffer =
+            Buffer.from(
+                signature,
+                'utf8'
             );
 
-        if (!signaturesMatch) {
+        const expectedSignatureBuffer =
+            Buffer.from(
+                expectedSignature,
+                'utf8'
+            );
+
+        if (
+            receivedSignatureBuffer.length !==
+            expectedSignatureBuffer.length ||
+            !crypto.timingSafeEqual(
+                receivedSignatureBuffer,
+                expectedSignatureBuffer
+            )
+        ) {
             console.error(
                 'Invalid Razorpay webhook signature.'
             );
@@ -93,18 +106,117 @@ export async function POST(
             );
         }
 
-        const event =
-            JSON.parse(rawBody);
+        let event;
+
+        try {
+            event =
+                JSON.parse(rawBody);
+        } catch (error) {
+            console.error(
+                'Invalid Razorpay webhook JSON:',
+                error
+            );
+
+            return NextResponse.json(
+                {
+                    error:
+                        'Invalid webhook payload.',
+                },
+                {
+                    status: 400,
+                }
+            );
+        }
+
+        console.log(
+            'Razorpay webhook received:',
+            event.event,
+            eventId
+        );
 
         const webhookEventRef =
             adminDb
                 .collection('webhookEvents')
                 .doc(eventId);
 
-        const existingWebhookEvent =
+        /*
+         * Atomically claim this webhook event.
+         *
+         * Only an event marked "processed" is considered
+         * permanently handled. If processing fails, Razorpay
+         * can retry and the event will be processed again.
+         */
+        try {
+            await adminDb.runTransaction(
+                async (transaction) => {
+                    const snapshot =
+                        await transaction.get(
+                            webhookEventRef
+                        );
+
+                    if (
+                        snapshot.exists &&
+                        snapshot.data()
+                            ?.status ===
+                        'processed'
+                    ) {
+                        return;
+                    }
+
+                    transaction.set(
+                        webhookEventRef,
+                        {
+                            eventId,
+                            event:
+                                event.event ||
+                                'unknown',
+                            status:
+                                'processing',
+                            receivedAt:
+                                snapshot.exists
+                                    ? snapshot
+                                        .data()
+                                        ?.receivedAt ||
+                                    new Date()
+                                    : new Date(),
+                            updatedAt:
+                                new Date(),
+                        },
+                        {
+                            merge: true,
+                        }
+                    );
+                }
+            );
+        } catch (error) {
+            console.error(
+                'Failed to claim Razorpay webhook event:',
+                error
+            );
+
+            return NextResponse.json(
+                {
+                    error:
+                        'Unable to process webhook event.',
+                },
+                {
+                    status: 500,
+                }
+            );
+        }
+
+        /*
+         * Check whether this event was already successfully
+         * processed.
+         */
+        const webhookEventSnapshot =
             await webhookEventRef.get();
 
-        if (existingWebhookEvent.exists) {
+        if (
+            webhookEventSnapshot.exists &&
+            webhookEventSnapshot.data()
+                ?.status === 'processed'
+        ) {
             console.log(
                 'Duplicate Razorpay webhook ignored:',
                 eventId
@@ -115,17 +227,6 @@ export async function POST(
                 duplicate: true,
             });
         }
-
-        console.log(
-            'Razorpay webhook received:',
-            event.event
-        );
-
-        await webhookEventRef.create({
-            eventId,
-            event: event.event || 'unknown',
-            receivedAt: new Date(),
-        });
 
         if (
             event.event ===
@@ -140,14 +241,32 @@ export async function POST(
             const paymentId =
                 refund?.payment_id;
 
-            if (!refundId || !paymentId) {
+            if (
+                !refundId ||
+                !paymentId
+            ) {
                 console.error(
-                    'Refund webhook is missing refund ID or payment ID.'
+                    'Refund processed webhook is missing refund ID or payment ID.'
                 );
 
-                return NextResponse.json({
-                    received: true,
+                await webhookEventRef.update({
+                    status:
+                        'failed',
+                    error:
+                        'Missing refund ID or payment ID.',
+                    updatedAt:
+                        new Date(),
                 });
+
+                return NextResponse.json(
+                    {
+                        error:
+                            'Invalid refund webhook payload.',
+                    },
+                    {
+                        status: 400,
+                    }
+                );
             }
 
             const ordersSnapshot =
@@ -169,9 +288,28 @@ export async function POST(
                     paymentId
                 );
 
-                return NextResponse.json({
-                    received: true,
+                await webhookEventRef.update({
+                    status:
+                        'failed',
+                    error:
+                        'Order not found for payment.',
+                    updatedAt:
+                        new Date(),
                 });
+
+                /*
+                 * Return 500 so Razorpay can retry the
+                 * webhook instead of permanently losing it.
+                 */
+                return NextResponse.json(
+                    {
+                        error:
+                            'Order not found.',
+                    },
+                    {
+                        status: 500,
+                    }
+                );
             }
 
             const orderDoc =
@@ -207,10 +345,32 @@ export async function POST(
             const paymentId =
                 refund?.payment_id;
 
-            if (!refundId || !paymentId) {
-                return NextResponse.json({
-                    received: true,
+            if (
+                !refundId ||
+                !paymentId
+            ) {
+                console.error(
+                    'Refund failed webhook is missing refund ID or payment ID.'
+                );
+
+                await webhookEventRef.update({
+                    status:
+                        'failed',
+                    error:
+                        'Missing refund ID or payment ID.',
+                    updatedAt:
+                        new Date(),
                 });
+
+                return NextResponse.json(
+                    {
+                        error:
+                            'Invalid refund webhook payload.',
+                    },
+                    {
+                        status: 400,
+                    }
+                );
             }
 
             const ordersSnapshot =
@@ -232,9 +392,24 @@ export async function POST(
                     paymentId
                 );
 
-                return NextResponse.json({
-                    received: true,
+                await webhookEventRef.update({
+                    status:
+                        'failed',
+                    error:
+                        'Order not found for payment.',
+                    updatedAt:
+                        new Date(),
                 });
+
+                return NextResponse.json(
+                    {
+                        error:
+                            'Order not found.',
+                    },
+                    {
+                        status: 500,
+                    }
+                );
             }
 
             const orderDoc =
@@ -253,6 +428,19 @@ export async function POST(
                 refundId
             );
         }
+
+        /*
+         * Only mark the webhook as processed AFTER
+         * the business operation has succeeded.
+         */
+        await webhookEventRef.update({
+            status:
+                'processed',
+            processedAt:
+                new Date(),
+            updatedAt:
+                new Date(),
+        });
 
         return NextResponse.json({
             received: true,
