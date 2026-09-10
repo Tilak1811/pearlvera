@@ -482,6 +482,17 @@ export default function CheckoutPage() {
                                         // VERIFY PAYMENT
                                         // ----------------------------------
 
+                                        const currentUser = auth.currentUser;
+
+                                        if (!currentUser) {
+                                            throw new Error(
+                                                'Your session has expired. Please login again.'
+                                            );
+                                        }
+
+                                        const idToken =
+                                            await currentUser.getIdToken();
+
                                         const verifyResponse =
                                             await fetch(
                                                 '/api/razorpay/verify-payment',
@@ -492,6 +503,9 @@ export default function CheckoutPage() {
                                                     headers: {
                                                         'Content-Type':
                                                             'application/json',
+
+                                                        Authorization:
+                                                            `Bearer ${idToken}`,
                                                     },
 
                                                     body:
@@ -534,16 +548,6 @@ export default function CheckoutPage() {
                                         // CREATE ORDER SECURELY ON SERVER
                                         // ==================================
 
-                                        const currentUser = auth.currentUser;
-
-                                        if (!currentUser) {
-                                            throw new Error(
-                                                'Your session has expired. Please login again.'
-                                            );
-                                        }
-
-                                        const idToken =
-                                            await currentUser.getIdToken();
 
                                         const orderResponse =
                                             await fetch(
