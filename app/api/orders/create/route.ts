@@ -205,16 +205,24 @@ export async function POST(
                 )
                 .digest('hex');
 
+        const receivedSignature =
+            Buffer.from(
+                body.razorpaySignature || '',
+                'utf8'
+            );
+
+        const expectedSignature =
+            Buffer.from(
+                generatedSignature,
+                'utf8'
+            );
+
         const signatureValid =
+            receivedSignature.length ===
+            expectedSignature.length &&
             crypto.timingSafeEqual(
-                Buffer.from(
-                    generatedSignature,
-                    'utf8'
-                ),
-                Buffer.from(
-                    body.razorpaySignature || '',
-                    'utf8'
-                )
+                receivedSignature,
+                expectedSignature
             );
 
         if (!signatureValid) {
