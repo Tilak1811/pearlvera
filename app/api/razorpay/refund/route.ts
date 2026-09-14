@@ -230,6 +230,11 @@ export async function POST(
             );
         }
 
+        const refundAmount =
+            Math.round(
+                orderTotal * 100
+            );
+
         // ==========================================
         // VERIFY PAYMENT WITH RAZORPAY
         // ==========================================
@@ -269,11 +274,6 @@ export async function POST(
             );
         }
 
-        const refundAmount =
-            Math.round(
-                orderTotal * 100
-            );
-
         if (
             payment.amount !==
             refundAmount
@@ -290,18 +290,164 @@ export async function POST(
         }
 
         // ==========================================
-        // CREATE RAZORPAY REFUND
+        // CREATE IDEMPOTENT RAZORPAY REFUND
         // ==========================================
+        //
+        // The Razorpay SDK version used by Pearlvera
+        // does not expose the X-Refund-Idempotency
+        // header. Therefore the refund creation request
+        // is made directly against the Razorpay API.
+        //
+        // The key is deterministic for this order so
+        // retries of the same refund use the exact same
+        // idempotency key.
+        //
 
-        const refund =
-            await razorpay.payments.refund(
-                paymentId,
+        const refundIdempotencyKey =
+            `pearlvera-refund-${orderId}`;
+
+        const razorpayResponse =
+            await fetch(
+                `https://api.razorpay.com/v1/payments/${encodeURIComponent(
+                    paymentId
+                )}/refund`,
                 {
-                    amount:
-                        refundAmount,
-                    speed: 'normal',
+                    method: 'POST',
+                    headers: {
+                        Authorization:
+                            `Basic ${Buffer.from(
+                                `${razorpayKeyId}:${razorpayKeySecret}`
+                            ).toString('base64')}`,
+                        'Content-Type':
+                            'application/json',
+                        'X-Refund-Idempotency':
+                            refundIdempotencyKey,
+                    },
+                    body: JSON.stringify({
+                        amount:
+                            refundAmount,
+                        speed:
+                            'normal',
+                    }),
                 }
             );
+
+        let refundResponse:
+            Record<string, unknown>;
+
+        try {
+            refundResponse =
+                (await razorpayResponse.json()) as Record<
+                    string,
+                    unknown
+                >;
+        } catch {
+            refundResponse = {};
+        }
+
+        // ==========================================
+        // HANDLE RAZORPAY REFUND FAILURE
+        // ==========================================
+
+        if (!razorpayResponse.ok) {
+            console.error(
+                'Razorpay refund request failed:',
+                {
+                    status:
+                        razorpayResponse.status,
+                    response:
+                        refundResponse,
+                    orderId,
+                }
+            );
+
+            if (
+                razorpayResponse.status ===
+                409
+            ) {
+                return NextResponse.json(
+                    {
+                        error:
+                            'A refund request with this idempotency key is currently being processed. Please use Sync Refund Status before trying again.',
+                    },
+                    {
+                        status: 409,
+                    }
+                );
+            }
+
+            const razorpayError =
+                refundResponse.error;
+
+            const errorMessage =
+                typeof razorpayError ===
+                    'object' &&
+                    razorpayError !== null &&
+                    'description' in
+                    razorpayError &&
+                    typeof (
+                        razorpayError as {
+                            description?: unknown;
+                        }
+                    ).description ===
+                    'string'
+                    ? (
+                        razorpayError as {
+                            description: string;
+                        }
+                    ).description
+                    : 'Unable to process refund with Razorpay.';
+
+            return NextResponse.json(
+                {
+                    error:
+                        errorMessage,
+                },
+                {
+                    status:
+                        razorpayResponse.status >=
+                            400 &&
+                            razorpayResponse.status <
+                            600
+                            ? razorpayResponse.status
+                            : 502,
+                }
+            );
+        }
+
+        // ==========================================
+        // VALIDATE REFUND RESPONSE
+        // ==========================================
+
+        const refundId =
+            refundResponse.id;
+
+        const refundStatus =
+            refundResponse.status;
+
+        if (
+            typeof refundId !== 'string' ||
+            typeof refundStatus !== 'string'
+        ) {
+            console.error(
+                'Razorpay returned an invalid refund response:',
+                {
+                    orderId,
+                    response:
+                        refundResponse,
+                }
+            );
+
+            return NextResponse.json(
+                {
+                    error:
+                        'Razorpay returned an invalid refund response. Use Sync Refund Status to verify the refund state.',
+                },
+                {
+                    status: 502,
+                }
+            );
+        }
 
         // ==========================================
         // SAVE REFUND INFORMATION
@@ -309,13 +455,12 @@ export async function POST(
 
         await orderRef.update({
             refundStatus:
-                refund.status ===
+                refundStatus ===
                     'processed'
                     ? 'Refunded'
                     : 'Refund Pending',
 
-            refundId:
-                refund.id,
+            refundId,
 
             refundedAt:
                 new Date(),
@@ -323,10 +468,9 @@ export async function POST(
 
         return NextResponse.json({
             success: true,
-            refundId:
-                refund.id,
+            refundId,
             status:
-                refund.status,
+                refundStatus,
         });
 
     } catch (error) {
