@@ -110,6 +110,9 @@ export async function POST(
         const orderItems =
             items as OrderItemInput[];
 
+        const normalizedItems =
+            new Map<string, number>();
+
         for (
             const item of orderItems
         ) {
@@ -141,7 +144,46 @@ export async function POST(
                     { status: 400 }
                 );
             }
+
+            const currentQuantity =
+                normalizedItems.get(
+                    item.productId
+                ) ?? 0;
+
+            const combinedQuantity =
+                currentQuantity +
+                item.quantity;
+
+            if (
+                !Number.isSafeInteger(
+                    combinedQuantity
+                )
+            ) {
+                return NextResponse.json(
+                    {
+                        error:
+                            'Invalid product quantity.',
+                    },
+                    { status: 400 }
+                );
+            }
+
+            normalizedItems.set(
+                item.productId,
+                combinedQuantity
+            );
         }
+
+        const validatedOrderItems:
+            OrderItemInput[] =
+            Array.from(
+                normalizedItems.entries()
+            ).map(
+                ([productId, quantity]) => ({
+                    productId,
+                    quantity,
+                })
+            );
 
         // ==========================================
         // GET TRUSTED PRODUCT PRICES
@@ -150,7 +192,7 @@ export async function POST(
         let subtotal = 0;
 
         for (
-            const item of orderItems
+            const item of validatedOrderItems
         ) {
             const productRef =
                 adminDb
