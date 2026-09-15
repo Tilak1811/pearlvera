@@ -13,8 +13,6 @@ import {
     getDocs,
     orderBy,
     query,
-    doc,
-    updateDoc,
 } from 'firebase/firestore';
 
 import {
@@ -112,7 +110,6 @@ const statuses = [
     'Shipped',
     'Out for Delivery',
     'Delivered',
-    'Cancelled',
 ];
 
 
@@ -281,68 +278,178 @@ function AdminOrdersContent() {
         orderId: string,
         status: string
     ) {
+        if (!user) {
+            alert('You must be logged in.');
+            return;
+        }
 
         try {
-
             setUpdating(true);
 
+            const idToken =
+                await user.getIdToken();
 
-            await updateDoc(
-                doc(
-                    db,
-                    'orders',
-                    orderId
-                ),
-                {
-                    status,
-                }
-            );
+            const response =
+                await fetch(
+                    '/api/orders/status',
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type':
+                                'application/json',
+                            Authorization:
+                                `Bearer ${idToken}`,
+                        },
+                        body: JSON.stringify({
+                            orderId,
+                            status,
+                        }),
+                    }
+                );
 
+            const data =
+                await response.json();
 
-            setOrders(
-                (current) =>
-                    current.map(
-                        (order) =>
-                            order.id === orderId
-                                ? {
-                                    ...order,
-                                    status,
-                                }
-                                : order
-                    )
-            );
+            if (!response.ok) {
+                throw new Error(
+                    data.error ||
+                    'Unable to update order status.'
+                );
+            }
 
-
-            setSelectedOrder(
-                (current) =>
-                    current &&
-                        current.id === orderId
+            setOrders((current) =>
+                current.map((order) =>
+                    order.id === orderId
                         ? {
-                            ...current,
+                            ...order,
                             status,
                         }
-                        : current
+                        : order
+                )
             );
 
+            setSelectedOrder((current) =>
+                current &&
+                    current.id === orderId
+                    ? {
+                        ...current,
+                        status,
+                    }
+                    : current
+            );
 
         } catch (error) {
-
             console.error(
-                'Failed to update order:',
+                'Order status update failed:',
                 error
             );
 
-
             alert(
-                'Unable to update order status.'
+                error instanceof Error
+                    ? error.message
+                    : 'Unable to update order status.'
             );
-
         } finally {
-
             setUpdating(false);
+        }
+    }
 
+    async function approveCancellation(
+        orderId: string
+    ) {
+        if (!user) {
+            alert('You must be logged in.');
+            return;
         }
 
+        const confirmed = window.confirm(
+            'Are you sure you want to approve this cancellation? The order stock will be restored.'
+        );
+
+        if (!confirmed) {
+            return;
+        }
+
+        try {
+            setUpdating(true);
+
+            const idToken =
+                await user.getIdToken();
+
+            const response =
+                await fetch(
+                    '/api/orders/cancel',
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type':
+                                'application/json',
+                            Authorization:
+                                `Bearer ${idToken}`,
+                        },
+                        body: JSON.stringify({
+                            orderId,
+                        }),
+                    }
+                );
+
+            const data =
+                await response.json();
+
+            if (!response.ok) {
+                throw new Error(
+                    data.error ||
+                    'Unable to cancel order.'
+                );
+            }
+
+            setOrders((current) =>
+                current.map((order) =>
+                    order.id === orderId
+                        ? {
+                            ...order,
+                            status: 'Cancelled',
+                            stockRestored: true,
+                            cancellationApprovedAt:
+                                new Date(),
+                        }
+                        : order
+                )
+            );
+
+            setSelectedOrder((current) =>
+                current &&
+                    current.id === orderId
+                    ? {
+                        ...current,
+                        status: 'Cancelled',
+                        stockRestored: true,
+                        cancellationApprovedAt:
+                            new Date(),
+                    }
+                    : current
+            );
+
+            alert(
+                data.alreadyCancelled
+                    ? 'This order was already cancelled and its stock was already restored.'
+                    : 'Order cancelled and stock restored successfully.'
+            );
+
+        } catch (error) {
+            console.error(
+                'Cancellation failed:',
+                error
+            );
+
+            alert(
+                error instanceof Error
+                    ? error.message
+                    : 'Unable to cancel order.'
+            );
+        } finally {
+            setUpdating(false);
+        }
     }
 
     async function processRefund(
@@ -1307,9 +1414,8 @@ function AdminOrdersContent() {
                                                 type="button"
                                                 disabled={updating}
                                                 onClick={() =>
-                                                    updateOrderStatus(
-                                                        selectedOrder.id,
-                                                        'Cancelled'
+                                                    approveCancellation(
+                                                        selectedOrder.id
                                                     )
                                                 }
                                                 className="rounded-full bg-red-600 px-6 py-3 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-50"
