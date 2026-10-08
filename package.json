@@ -12,10 +12,10 @@
     "@hookform/resolvers": "^5.5.7",
     "clsx": "^2.1.1",
     "firebase": "^12.17.1",
-    "firebase-admin": "^14.3.0",
+    "firebase-admin": "^14.5.0",
     "framer-motion": "^12.43.0",
     "lucide-react": "^1.28.0",
-    "next": "16.2.12",
+    "next": "^16.4.0",
     "razorpay": "^2.9.8",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -30,7 +30,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.12",
+    "eslint-config-next": "^16.4.0",
     "prettier": "^3.9.6",
     "prettier-plugin-tailwindcss": "^0.8.1",
     "tailwindcss": "^4",
@@ -39,6 +39,8 @@
   "overrides": {
     "jwks-rsa": {
       "jose": "4.15.9"
-    }
+    },
+    "nanoid": "3.3.20",
+    "source-map-js": "1.2.2"
   }
 }
