@@ -119,12 +119,99 @@ export async function POST(
 
         if (
             !customer ||
-            !shippingAddress
+            typeof customer !== 'object' ||
+            !shippingAddress ||
+            typeof shippingAddress !== 'object'
         ) {
             return NextResponse.json(
                 {
                     error:
                         'Customer and shipping information are required.',
+                },
+                { status: 400 }
+            );
+        }
+
+        const customerData = customer as {
+            name?: unknown;
+            email?: unknown;
+            phone?: unknown;
+        };
+
+        const shippingAddressData =
+            shippingAddress as Record<string, unknown>;
+
+        if (
+            typeof customerData.name !== 'string' ||
+            customerData.name.trim().length === 0 ||
+            customerData.name.length > 100 ||
+            typeof customerData.email !== 'string' ||
+            customerData.email.trim().length === 0 ||
+            customerData.email.length > 254 ||
+            typeof customerData.phone !== 'string' ||
+            customerData.phone.trim().length === 0 ||
+            customerData.phone.length > 30
+        ) {
+            return NextResponse.json(
+                {
+                    error:
+                        'Invalid customer information.',
+                },
+                { status: 400 }
+            );
+        }
+
+        const requiredShippingFields = [
+            'fullName',
+            'phone',
+            'street',
+            'city',
+            'state',
+            'pinCode',
+        ] as const;
+
+        for (const field of requiredShippingFields) {
+            const value =
+                shippingAddressData[field];
+
+            if (
+                typeof value !== 'string' ||
+                value.trim().length === 0 ||
+                value.length > 200
+            ) {
+                return NextResponse.json(
+                    {
+                        error:
+                            'Invalid shipping address.',
+                    },
+                    { status: 400 }
+                );
+            }
+        }
+
+        if (
+            shippingAddressData.addressId !== undefined &&
+            shippingAddressData.addressId !== null &&
+            typeof shippingAddressData.addressId !== 'string'
+        ) {
+            return NextResponse.json(
+                {
+                    error:
+                        'Invalid shipping address.',
+                },
+                { status: 400 }
+            );
+        }
+
+        if (
+            shippingAddressData.label !== undefined &&
+            shippingAddressData.label !== null &&
+            typeof shippingAddressData.label !== 'string'
+        ) {
+            return NextResponse.json(
+                {
+                    error:
+                        'Invalid shipping address.',
                 },
                 { status: 400 }
             );
